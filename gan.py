@@ -11,6 +11,7 @@ import gc
 import os
 import warnings
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -25,7 +26,6 @@ import random
 warnings.filterwarnings('ignore')
 
 parquet_file_path = 'data/DrDoS_DNS.parquet'
-
 
 def load_data():
     df_from_parquet = pq.read_table(parquet_file_path).to_pandas()
@@ -42,40 +42,46 @@ print(df.iloc[:, -1:].value_counts())  # 统计最后列Label各个不同值的�
 train, test = train_test_split(df, test_size=0.3, random_state=42, shuffle=True)  # 打乱后分割训练集和测试集 train 0.7 test 0.3
 
 train_dns_cpy = (train[train['Label'] == 'DrDoS_DNS']).copy()
-df_dns = train_dns_cpy
-print(df_dns.shape)
+test_dns_cpy = (test[test['Label'] == 'DrDoS_DNS']).copy()
+df_dns_train = train_dns_cpy
+df_dns_test = test_dns_cpy
+print("---shape of train and test data---")
+print(df_dns_train.shape)
+print(df_dns_test.shape)
 
 # Saving .csv files for samples
-train_csv_path = 'data/DrDoS_DNS_Samples.csv'
-df_dns = df_dns.iloc[:, :-1].dropna(axis=1, how='all')  # 选取除最后一列外的所有列, 删除所有完全由NA/NaN值组成的列
-df_dns.to_csv(train_csv_path, index=False)  # 默认使用 UTF-8 编码格式来保存CSV文件
-print(df_dns.shape)
-
-# drop -> other than rare classes
-train_dns = train.drop(train[train['Label'] == 'DrDoS_DNS'].index)
+train_csv_path = 'result/DrDoS_DNS_Train.csv'
+test_csv_path = 'result/DrDoS_DNS_Test.csv'
+df_dns_train = df_dns_train.iloc[:, :-1].dropna(axis=1, how='all')  # 选取除最后一列外的所有列, 删除所有完全由NA/NaN值组成的列
+df_dns_test = df_dns_test.iloc[:, :-1].dropna(axis=1, how='all')
+df_dns_train.to_csv(train_csv_path, index=False)  # 默认使用 UTF-8 编码格式来保存CSV文件
+df_dns_test.to_csv(test_csv_path, index=False)  # 默认使用 UTF-8 编码格式来保存CSV文件
+print(df_dns_train.shape)
+print(df_dns_test.shape)
 
 # GAN Model
 print("---Start training GAN model---")
 header = pd.read_csv(train_csv_path, header=None, encoding='utf-8')  # 不将CSV文件的第一行用作列名，生成默认的整数索引作为列名
 # 深拷贝
-df = pd.DataFrame()
-df = header.copy()
+df = header.copy() # 列名是第一行 without label
+df_gen = df.iloc[0:1]
+print("---show train data---")
 print(df.shape)
 print(df.head())
+print(df_gen.shape)
+print(df_gen.head())
 
 col_count = df.shape[1]
-
 
 def save_data2csv(output_data):
     # add row to end of DataFrame
     df.loc[len(df.index)] = output_data.numpy()[0]
-
+    df_gen.loc[len(df_gen.index)] = output_data.numpy()[0]
 
 data = []
 with open(train_csv_path, 'r') as f:
     reader = csv.reader(f)
-    data = list(reader)
-
+    data = list(reader) # 二维列表，第一行是列名
 
 # 从row1开始读，去掉header
 def get_dataset():
@@ -85,11 +91,10 @@ def get_dataset():
     return torch.Tensor([re_float])
 
 
-# generating noise for generator 生成一个形状为(1, 68)的全零PyTorch张量
+# generating noise for generator 生成一个形状为(1, col_num)的全零PyTorch张量
 def make_noise(col_num):
     # return torch.zeros((1, 68))
     return torch.Tensor(np.random.uniform(0, 0, (1, col_num)))
-
 
 class generator(nn.Module):
     def __init__(self, inp, out):
@@ -106,7 +111,6 @@ class generator(nn.Module):
         x = self.net(x)
         return x
 
-
 class discriminator(nn.Module):
     def __init__(self, inp, out):
         super(discriminator, self).__init__()
@@ -122,9 +126,7 @@ class discriminator(nn.Module):
         x = self.net(x)
         return x
 
-
 # 全零张量初始化模型
-
 # Generator
 gen = generator(col_count, col_count)
 x1 = gen(make_noise(col_count))
@@ -145,9 +147,9 @@ criteriond1 = nn.BCELoss()
 optimizerd1 = optim.SGD(discrim.parameters(), lr=0.001, momentum=0.9)
 
 criteriond2 = nn.BCELoss()
-optimizerd2 = optim.SGD(gen.parameters(), lr=0.001, momentum=0.9)
+# optimizerd2 = optim.SGD(gen.parameters(), lr=0.001, momentum=0.9)
 # 使用 Adam 优化器替换 SGD 优化器
-# optimizerd2 = optim.Adam(gen.parameters(), lr=0.001, betas=(0.5, 0.999))
+optimizerd2 = optim.Adam(gen.parameters(), lr=0.001, betas=(0.5, 0.999))
 
 # 训练 GAN
 for nsteps in range(step_num):
@@ -205,24 +207,37 @@ for nsteps in range(step_num):
         save_data2csv(data_d_gen_out)
 
 # 删除第一行表头
-df_final_dns = df.drop(index=0)
+df_dns_mix = df.drop(index=0).dropna() # train + gen without label
+df_dns_gen = df_gen.drop(index=0).dropna() # only gen without label
+print("---mix data---")
+print(df_dns_mix.shape)
+print(df_dns_mix.head())
+print("---show gen data---")
+print(df_dns_gen.shape)
+print(df_dns_gen.head())
+print(df_dns_gen.dtypes)
 # label
-train_dns_cpy_label = train_dns_cpy.iloc[1, -1:]
-train_dns_cpy_labels = pd.concat([train_dns_cpy_label] * (gen_num + len(train_dns_cpy)))
+df_dns_label = train_dns_cpy.iloc[1, -1:]
+df_dns_mix_labels = pd.concat([df_dns_label] * (gen_num + len(train_dns_cpy)))
+df_dns_gen_labels = pd.concat([df_dns_label] * gen_num)
 
-# 行索引
-train_dns_cpy_labels = train_dns_cpy_labels.reset_index(drop=True)
-# 补充label
-df_final_dns = pd.concat([df_final_dns, train_dns_cpy_labels], axis=1)
-df_final_dns = df_final_dns.dropna()
-print(df_final_dns.shape)
-print(df_final_dns.head())
+# 去除行索引
+df_dns_mix_labels = df_dns_mix_labels.reset_index(drop=True)
+df_dns_gen_labels = df_dns_gen_labels.reset_index(drop=True)
+# df补充label
+df_mix_dns_label = pd.concat([df_dns_mix, df_dns_mix_labels], axis=1)
+df_gen_dns_label = pd.concat([df_dns_gen, df_dns_gen_labels], axis=1)
 
-# todo: 测试集上 测试 GAN 判别器的准确性
 
-# todo: 分析生成数据的质量
+gen_weight_path = 'result/generator_weights.pth'
+discrim_weight_path = 'result/discriminator_weights.pth'
+# 保存模型权重
+torch.save(gen.state_dict(), gen_weight_path)
+torch.save(discrim.state_dict(), discrim_weight_path)
 
-# todo: 使用这些数据增强的传统DDoS检测模型的性能提升
+# 保存生成数据
+gen_csv_path = 'result/DrDoS_DNS_Gen.csv'
+df_dns_gen.to_csv(gen_csv_path, index=False)
 
 # 不知道为什么要分类？？？
 
@@ -269,3 +284,4 @@ print(df_final_dns.head())
 #
 # avg_accuracy /= len(labels)
 # print("Avg. accuracy", avg_accuracy)
+
