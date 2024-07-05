@@ -1,26 +1,15 @@
+import csv
+import random
+import warnings
+
 import numpy as np  # linear algebra
 import pandas as pd  # data processing, CSV file I/O (e.g. pd.read_csv)
-# import matplotlib
-# import seaborn as sns
-# import sklearn
-# import imblearn
-# import matplotlib.pyplot as plt
-# import time
-# import sklearn.metrics as m
-import gc
-import os
-import warnings
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-import pyarrow as pa
 import pyarrow.parquet as pq
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.model_selection import train_test_split
 from torch.autograd import Variable
-import csv
-import random
 
 # Ignore warnings
 warnings.filterwarnings('ignore')
@@ -134,7 +123,7 @@ x1 = gen(make_noise(col_count))
 discrim = discriminator(col_count, 1)
 x2 = discrim(x1)
 
-step_num = 20
+step_num = 1000
 epochs = 4
 gen_num = step_num * epochs
 # d_step = 10
